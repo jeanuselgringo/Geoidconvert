@@ -4,6 +4,8 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as colors
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
@@ -21,10 +23,11 @@ grid_geom  = [Point(x,y) for x,y in zip(grid_df.X_WGS84, grid_df.Y_WGS84)]
 grid_gdf   = gpd.GeoDataFrame(grid_df, geometry=grid_geom, crs="EPSG:4326")
 
 points_gdf = None
+points_crs_original = None
 
 # ─── Traitements ──────────────────────────────────────────────
 def load_points():
-    global points_gdf
+    global points_gdf, points_crs_original
     f = filedialog.askopenfilename(
         filetypes=[("Shapefiles", "*.shp"),("CSV", "*.csv")],
         title="Sélectionnez vos sondages"
@@ -34,10 +37,11 @@ def load_points():
     try:
         if f.lower().endswith('.shp'):
             points_gdf = gpd.read_file(f)
+            points_crs_original = points_gdf.crs
             if points_gdf.crs is None:
+                messagebox.showwarning("Attention", "CRS non défini. Supposition WGS84.")
                 points_gdf.set_crs(epsg=4326, inplace=True)
-            else:
-                points_gdf = points_gdf.to_crs(epsg=4326)
+            points_gdf = points_gdf.to_crs(epsg=4326)
         else:
             df = pd.read_csv(f, sep=';', encoding='utf-8')
             if not {"X_WGS84","Y_WGS84"}.issubset(df.columns):
@@ -47,6 +51,7 @@ def load_points():
                 geometry=[Point(x,y) for x,y in zip(df.X_WGS84, df.Y_WGS84)],
                 crs="EPSG:4326"
             )
+            points_crs_original = points_gdf.crs
 
         # MAJ menu altitude
         nums = points_gdf.select_dtypes(include='number').columns.tolist()
@@ -60,7 +65,8 @@ def load_points():
 
         plot_btn.config(state='normal')
         export_btn.config(state='disabled')
-        log_box.insert('end', f"• {len(points_gdf)} points chargés\n")
+        crs_msg = points_crs_original.to_string() if points_crs_original else "inconnu"
+        log_box.insert('end', f"• {len(points_gdf)} points chargés (CRS initial : {crs_msg})\n")
 
     except Exception as e:
         messagebox.showerror("Erreur", str(e))
@@ -99,6 +105,14 @@ def plot_maps():
         fig, ax = plt.subplots(figsize=(6,5))
         gdf.plot(ax=ax, column='N', cmap='viridis', markersize=4, alpha=0.5)
         pdf.plot(ax=ax, column='H_ortho', cmap='coolwarm', markersize=20, edgecolor='k')
+        sm1 = cm.ScalarMappable(cmap='viridis', norm=colors.Normalize(vmin=gdf['N'].min(), vmax=gdf['N'].max()))
+        sm1._A = []
+        cbar1 = fig.colorbar(sm1, ax=ax, fraction=0.035, pad=0.02)
+        cbar1.set_label('N (m)')
+        sm2 = cm.ScalarMappable(cmap='coolwarm', norm=colors.Normalize(vmin=pdf['H_ortho'].min(), vmax=pdf['H_ortho'].max()))
+        sm2._A = []
+        cbar2 = fig.colorbar(sm2, ax=ax, fraction=0.035, pad=0.08)
+        cbar2.set_label('H_ortho (m)')
         ax.set_title(title)
         epsg = gdf.crs.to_epsg() if gdf.crs else None
         if epsg == 4326:
@@ -123,9 +137,12 @@ def export_data():
     # CSV
     points_gdf.drop(columns='geometry').to_csv(os.path.join(od,"points_corriges.csv"),
                                                sep=';',index=False)
+    # SHP WGS84
+    points_gdf.to_file(os.path.join(od,"points_corriges_WGS84.shp"),
+                       driver="ESRI Shapefile")
     # SHP L72
     points_gdf.to_crs(31370).to_file(os.path.join(od,"points_corriges_L72.shp"),
-                                      driver="ESRI Shapefile")
+                                     driver="ESRI Shapefile")
     raster_btn.config(state='normal')
     folium_btn.config(state='normal')
     log_box.insert('end', f"• Exporté dans {od}\n")
@@ -181,6 +198,7 @@ def create_folium_map():
         if 'N_interp' not in points_gdf.columns or 'H_ortho' not in points_gdf.columns:
             interpolate_and_compute()
         gdf_wgs = points_gdf.to_crs(4326)
+        fld = alt_var.get()
         centre = [gdf_wgs.geometry.y.mean(), gdf_wgs.geometry.x.mean()]
         m = folium.Map(location=centre, zoom_start=12, tiles="OpenStreetMap")
         folium.raster_layers.WmsTileLayer(
@@ -193,6 +211,7 @@ def create_folium_map():
         for idx, row in gdf_wgs.iterrows():
             popup_html = (
                 f"<b>ID :</b> {idx}<br>"
+                f"<b>Alt. ellipsoïdale :</b> {row[fld]:.2f} m<br>"
                 f"<b>N_interp :</b> {row['N_interp']:.2f} m<br>"
                 f"<b>H_ortho :</b> {row['H_ortho']:.2f} m"
             )
