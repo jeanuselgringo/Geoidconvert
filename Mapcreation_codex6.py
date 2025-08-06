@@ -137,7 +137,12 @@ def create_raster():
         ys = gdf_l72.geometry.y.values
         zs = gdf_l72["N"].values
         pixel_size = 10
-        xmin, ymin, xmax, ymax = gdf_l72.total_bounds
+        # choix de l'étendue : grille complète ou zone des sondages
+        if raster_extent_var.get() == "Sondages" and points_gdf is not None:
+            bounds = points_gdf.to_crs(31370).total_bounds
+        else:
+            bounds = gdf_l72.total_bounds
+        xmin, ymin, xmax, ymax = bounds
         width  = int(np.ceil((xmax - xmin) / pixel_size))
         height = int(np.ceil((ymax - ymin) / pixel_size))
         xi = np.linspace(xmin, xmin + width * pixel_size, width)
@@ -238,16 +243,21 @@ plot_btn.grid(row=2, column=0, columnspan=2, pady=8, sticky='ew')
 export_btn = ttk.Button(frm, text="💾 Export données",    command=export_data, state='disabled')
 export_btn.grid(row=3, column=0, columnspan=2, pady=8, sticky='ew')
 
+ttk.Label(frm, text="Étendue raster :").grid(row=4, column=0, sticky='e')
+raster_extent_var = tk.StringVar(value="Grille HGB18")
+raster_extent_menu = ttk.OptionMenu(frm, raster_extent_var, "Grille HGB18", "Grille HGB18", "Sondages")
+raster_extent_menu.grid(row=4, column=1, sticky='ew', padx=(5,0))
+
 raster_btn = ttk.Button(frm, text="🌐 Créer Raster",     command=create_raster, state='disabled')
-raster_btn.grid(row=4, column=0, columnspan=2, pady=8, sticky='ew')
+raster_btn.grid(row=5, column=0, columnspan=2, pady=8, sticky='ew')
 
 folium_btn = ttk.Button(frm, text="🌍 Carte interactive", command=create_folium_map, state='disabled')
-folium_btn.grid(row=5, column=0, columnspan=2, pady=8, sticky='ew')
+folium_btn.grid(row=6, column=0, columnspan=2, pady=8, sticky='ew')
 
 # journal
-ttk.Label(frm, text="Journal des actions :").grid(row=6, column=0, columnspan=2, sticky='w')
+ttk.Label(frm, text="Journal des actions :").grid(row=7, column=0, columnspan=2, sticky='w')
 log_box = tk.Text(frm, height=6, background='#f9f9f9', borderwidth=1, relief='solid')
-log_box.grid(row=7, column=0, columnspan=2, sticky='nsew', pady=(5,0))
-frm.rowconfigure(7, weight=1)
+log_box.grid(row=8, column=0, columnspan=2, sticky='nsew', pady=(5,0))
+frm.rowconfigure(8, weight=1)
 
 root.mainloop()
