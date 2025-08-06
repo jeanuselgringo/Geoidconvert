@@ -103,15 +103,31 @@ def plot_maps():
     ]
     for title, gdf, pdf, bbox in configs:
         fig, ax = plt.subplots(figsize=(6,5))
+        # réserver de l'espace à droite et en bas pour les barres de couleurs
+        fig.subplots_adjust(right=0.85, bottom=0.2)
         gdf.plot(ax=ax, column='N', cmap='viridis', markersize=4, alpha=0.5)
         pdf.plot(ax=ax, column='H_ortho', cmap='coolwarm', markersize=20, edgecolor='k')
-        sm1 = cm.ScalarMappable(cmap='viridis', norm=colors.Normalize(vmin=gdf['N'].min(), vmax=gdf['N'].max()))
+        sm1 = cm.ScalarMappable(
+            cmap='viridis',
+            norm=colors.Normalize(vmin=gdf['N'].min(), vmax=gdf['N'].max())
+        )
         sm1._A = []
+        # barre de couleur verticale pour la grille N
         cbar1 = fig.colorbar(sm1, ax=ax, fraction=0.035, pad=0.02)
         cbar1.set_label('N (m)')
-        sm2 = cm.ScalarMappable(cmap='coolwarm', norm=colors.Normalize(vmin=pdf['H_ortho'].min(), vmax=pdf['H_ortho'].max()))
+        sm2 = cm.ScalarMappable(
+            cmap='coolwarm',
+            norm=colors.Normalize(vmin=pdf['H_ortho'].min(), vmax=pdf['H_ortho'].max())
+        )
         sm2._A = []
-        cbar2 = fig.colorbar(sm2, ax=ax, fraction=0.035, pad=0.08)
+        # barre de couleur horizontale pour H_ortho afin d'éviter le chevauchement
+        cbar2 = fig.colorbar(
+            sm2,
+            ax=ax,
+            orientation='horizontal',
+            fraction=0.035,
+            pad=0.12
+        )
         cbar2.set_label('H_ortho (m)')
         ax.set_title(title)
         epsg = gdf.crs.to_epsg() if gdf.crs else None
@@ -123,7 +139,8 @@ def plot_maps():
             ax.set_ylabel("Y (m)")
         if bbox:
             ax.set_xlim(bbox[0],bbox[1]); ax.set_ylim(bbox[2],bbox[3])
-    plt.tight_layout()
+        # ajuste la mise en page pour chaque figure afin d'éviter le chevauchement
+        fig.tight_layout()
     plt.show()
     export_btn.config(state='normal')
     log_box.insert('end', "• Cartes affichées\n")
