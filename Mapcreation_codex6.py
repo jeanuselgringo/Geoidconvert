@@ -8,6 +8,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 from scipy.interpolate import griddata
+import rasterio
+from rasterio.transform import from_origin
+import folium
+import webbrowser
 
 # ─── 1) Chargement de la grille HGB18 ─────────────────────────
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -83,18 +87,26 @@ def plot_maps():
     # bornes général/zoom
     gx0,gy0,gx1,gy1 = grid_gdf.total_bounds
     px0,py0,px1,py1 = points_gdf.total_bounds
+    lpx0,lpy0,lpx1,lpy1 = points_gdf.to_crs(31370).total_bounds
 
     configs = [
         ("Global WGS84", grid_gdf, points_gdf, (gx0,gx1,gy0,gy1)),
         ("Global L72",   grid_gdf.to_crs(31370), points_gdf.to_crs(31370), None),
         ("Zoom WGS84",   grid_gdf, points_gdf, (px0,px1,py0,py1)),
-        ("Zoom L72",     grid_gdf.to_crs(31370), points_gdf.to_crs(31370), None),
+        ("Zoom L72",     grid_gdf.to_crs(31370), points_gdf.to_crs(31370), (lpx0,lpx1,lpy0,lpy1)),
     ]
     for title, gdf, pdf, bbox in configs:
         fig, ax = plt.subplots(figsize=(6,5))
         gdf.plot(ax=ax, column='N', cmap='viridis', markersize=4, alpha=0.5)
         pdf.plot(ax=ax, column='H_ortho', cmap='coolwarm', markersize=20, edgecolor='k')
         ax.set_title(title)
+        epsg = gdf.crs.to_epsg() if gdf.crs else None
+        if epsg == 4326:
+            ax.set_xlabel("Longitude (°)")
+            ax.set_ylabel("Latitude (°)")
+        else:
+            ax.set_xlabel("X (m)")
+            ax.set_ylabel("Y (m)")
         if bbox:
             ax.set_xlim(bbox[0],bbox[1]); ax.set_ylim(bbox[2],bbox[3])
     plt.tight_layout()
@@ -115,12 +127,93 @@ def export_data():
     points_gdf.to_crs(31370).to_file(os.path.join(od,"points_corriges_L72.shp"),
                                       driver="ESRI Shapefile")
     raster_btn.config(state='normal')
+    folium_btn.config(state='normal')
     log_box.insert('end', f"• Exporté dans {od}\n")
+
+def create_raster():
+    try:
+        gdf_l72 = grid_gdf.to_crs(31370)
+        xs = gdf_l72.geometry.x.values
+        ys = gdf_l72.geometry.y.values
+        zs = gdf_l72["N"].values
+        pixel_size = 10
+        xmin, ymin, xmax, ymax = gdf_l72.total_bounds
+        width  = int(np.ceil((xmax - xmin) / pixel_size))
+        height = int(np.ceil((ymax - ymin) / pixel_size))
+        xi = np.linspace(xmin, xmin + width * pixel_size, width)
+        yi = np.linspace(ymax - height * pixel_size, ymax, height)
+        XI, YI = np.meshgrid(xi, yi)
+        ZI = griddata((xs, ys), zs, (XI, YI), method='linear')
+        mask = np.isnan(ZI)
+        if mask.any():
+            ZI[mask] = griddata((xs, ys), zs, (XI[mask], YI[mask]), method='nearest')
+        transform = from_origin(xmin, ymax, pixel_size, pixel_size)
+        out_dir = os.path.join(script_dir, "ConversionExport")
+        os.makedirs(out_dir, exist_ok=True)
+        out_tif = os.path.join(out_dir, "HGB18_interpolated.tif")
+        with rasterio.open(
+            out_tif, 'w',
+            driver='GTiff',
+            height=height,
+            width=width,
+            count=1,
+            dtype=ZI.dtype,
+            crs='EPSG:31370',
+            transform=transform,
+            nodata=-9999
+        ) as dst:
+            dst.write(ZI, 1)
+        messagebox.showinfo("Succès", f"Raster créé : {out_tif}")
+        log_box.insert('end', f"• Raster créé → {out_tif}\n")
+    except Exception as e:
+        messagebox.showerror("Erreur", str(e))
+        log_box.insert('end', f"✗ Erreur raster : {e}\n")
+
+def create_folium_map():
+    if points_gdf is None:
+        return
+    try:
+        if 'N_interp' not in points_gdf.columns or 'H_ortho' not in points_gdf.columns:
+            interpolate_and_compute()
+        gdf_wgs = points_gdf.to_crs(4326)
+        centre = [gdf_wgs.geometry.y.mean(), gdf_wgs.geometry.x.mean()]
+        m = folium.Map(location=centre, zoom_start=12, tiles="OpenStreetMap")
+        folium.raster_layers.WmsTileLayer(
+            url="https://wxs.ign.fr/choisirgeoportail/geoportail/wms",
+            layers="GEOGRAPHICALGRIDSYSTEMS.PLANIGN",
+            fmt="image/png",
+            transparent=True,
+            name="Plan IGN"
+        ).add_to(m)
+        for idx, row in gdf_wgs.iterrows():
+            popup_html = (
+                f"<b>ID :</b> {idx}<br>"
+                f"<b>N_interp :</b> {row['N_interp']:.2f} m<br>"
+                f"<b>H_ortho :</b> {row['H_ortho']:.2f} m"
+            )
+            folium.CircleMarker(
+                location=[row.geometry.y, row.geometry.x],
+                radius=5,
+                color="blue",
+                fill=True,
+                fill_color="cyan",
+                fill_opacity=0.7,
+                popup=folium.Popup(popup_html, max_width=200)
+            ).add_to(m)
+        out_dir = os.path.join(script_dir, "ConversionExport")
+        os.makedirs(out_dir, exist_ok=True)
+        out_html = os.path.join(out_dir, "points_interactifs.html")
+        m.save(out_html)
+        webbrowser.open(out_html)
+        log_box.insert('end', f"• Carte interactive → {out_html}\n")
+    except Exception as e:
+        messagebox.showerror("Erreur", str(e))
+        log_box.insert('end', f"✗ Erreur Folium : {e}\n")
 
 # ─── 3) Construction IHM ─────────────────────────────────────────────────
 root = tk.Tk()
 root.title("Conversion d'altitudes")
-root.geometry("420x360")
+root.geometry("420x420")
 style = ttk.Style(root)
 style.theme_use('clam')
 
@@ -145,13 +238,16 @@ plot_btn.grid(row=2, column=0, columnspan=2, pady=8, sticky='ew')
 export_btn = ttk.Button(frm, text="💾 Export données",    command=export_data, state='disabled')
 export_btn.grid(row=3, column=0, columnspan=2, pady=8, sticky='ew')
 
-raster_btn = ttk.Button(frm, text="🌐 Créer Raster",     command=lambda: messagebox.showinfo("Info","Raster OK"), state='disabled')
+raster_btn = ttk.Button(frm, text="🌐 Créer Raster",     command=create_raster, state='disabled')
 raster_btn.grid(row=4, column=0, columnspan=2, pady=8, sticky='ew')
 
+folium_btn = ttk.Button(frm, text="🌍 Carte interactive", command=create_folium_map, state='disabled')
+folium_btn.grid(row=5, column=0, columnspan=2, pady=8, sticky='ew')
+
 # journal
-ttk.Label(frm, text="Journal des actions :").grid(row=5, column=0, columnspan=2, sticky='w')
+ttk.Label(frm, text="Journal des actions :").grid(row=6, column=0, columnspan=2, sticky='w')
 log_box = tk.Text(frm, height=6, background='#f9f9f9', borderwidth=1, relief='solid')
-log_box.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(5,0))
-frm.rowconfigure(6, weight=1)
+log_box.grid(row=7, column=0, columnspan=2, sticky='nsew', pady=(5,0))
+frm.rowconfigure(7, weight=1)
 
 root.mainloop()

@@ -8,7 +8,7 @@ import folium
 script_dir = os.path.dirname(os.path.abspath(__file__))
 export_dir = os.path.join(script_dir, "ConversionExport")
 csv_path   = os.path.join(export_dir, "points_corriges.csv")
-shp_path   = os.path.join(export_dir, "points_corriges.shp")
+shp_path   = os.path.join(export_dir, "points_corriges_L72.shp")
 
 # 2) Charge d'abord le Shapefile (si disponible) pour récupérer la géométrie
 if os.path.exists(shp_path):
